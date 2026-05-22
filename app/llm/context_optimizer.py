@@ -118,7 +118,7 @@ def optimize_single_tool_result(block: Dict) -> Dict:
 
     if estimated_tokens > max_tokens:
         LOG.info(f"触发优化一：tool_result 内容 {estimated_tokens} tokens 超过 "
-                f"{max_tokens} tokens 限制，将进行截断")
+                 f"{max_tokens} tokens 限制，将进行截断")
         truncated = truncate_large_tool_result(content, max_tokens)
         block = copy.deepcopy(block)
         block["content"] = truncated
@@ -248,7 +248,7 @@ def optimize_tool_results_for_llm(messages: List[Dict]) -> List[Dict]:
             _processed_message_ids.add(block_key)
             modified = True
             LOG.debug(f"tool_result 已经被压缩, id={block_key}, 原始长度={org_len}, "
-                     f"压缩后长度={len(compacted)}")
+                      f"压缩后长度={len(compacted)}")
 
         # 如果修改了消息但没有触发提前返回，继续往前走
         if modified:
@@ -378,6 +378,6 @@ def optimize_thinking_for_llm(messages: List[Dict]) -> List[Dict]:
             msg["content"] = new_content
             removed_count = original_len - len(new_content)
             LOG.debug(f"已删除 assistant 消息中的 {removed_count} 个 thinking 块, "
-                     f"索引={i}, 轮次={cnt_rounds}")
+                      f"索引={i}, 轮次={cnt_rounds}")
 
     return messages
