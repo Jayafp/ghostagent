@@ -8,11 +8,10 @@ gradio
 loguru
 requests
 
-browser-use
+#browser-use
 
 # Memory Retrieval
 rank-bm25~=0.2.2
-#sentence-transformers~=3.4.0
-sentence-transformers
+sentence-transformers~=3.4.0
 numpy~=2.2.0
 jieba~=0.42.1
