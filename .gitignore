@@ -1,0 +1,12 @@
+.idea/
+*.iml
+*.ipr
+*.iws
+models
+memory
+logs
+issue
+temp
+docs
+demo
+openspec

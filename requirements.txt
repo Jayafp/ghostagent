@@ -1,0 +1,18 @@
+anthropic~=0.86.0
+python-dotenv~=1.2.2
+mcp~=1.26.0
+pyyaml~=6.0.3
+playwright
+aiohttp
+gradio
+loguru
+requests
+
+browser-use
+
+# Memory Retrieval
+rank-bm25~=0.2.2
+#sentence-transformers~=3.4.0
+sentence-transformers
+numpy~=2.2.0
+jieba~=0.42.1
