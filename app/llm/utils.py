@@ -102,3 +102,21 @@ def estimate_tokens(messages: List[Dict]) -> int:
         用于上下文长度管理和压缩决策，不需要精确值
     """
     return len(str(messages)) // 4
+
+
+def usage_tokens(message) -> str:
+    try:
+        if not message:
+            return ""
+
+        usage = getattr(message, 'usage')
+        if not usage:
+            return ""
+
+        cache_read_input_tokens = getattr(usage, 'cache_read_input_tokens', 0)
+        input_tokens = getattr(usage, 'input_tokens', 0)
+        output_tokens = getattr(usage, 'output_tokens', 0)
+
+        return f'cache_tokens={cache_read_input_tokens}, input_tokens={input_tokens}, output_tokens={output_tokens}'
+    except:
+        return ""

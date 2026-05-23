@@ -16,7 +16,7 @@ from app.llm.anthropic_logging import LoggingAnthropic, serialize_messages
 from app.skill.skill_manager import SKILL_MANAGER
 from app.tool.tools import TOOLS, TOOL_HANDLERS
 from app.llm.context_compact import micro_compact, smart_compact, TOKEN_SOFT_LIMIT, TOKEN_HARD_LIMIT, LLM_MAX_WINDOW
-from app.llm.utils import estimate_tokens
+from app.llm.utils import estimate_tokens, usage_tokens
 from app.llm.session_manager import session
 from app.llm.memory_manager import append_message, KEEP_RECENT_ROUNDS, INIT_RECENT_ROUNDS, MEMORY_DIR
 from app.llm.memory_retrieval import get_retriever, clear_retriever_cache
@@ -520,7 +520,7 @@ def agent_loop(message: str, session_id: str) -> Generator[Dict, None, None]:
                 append_message(session_id, "assistant", response_content_blocks)
 
             if final_response.stop_reason != "tool_use":
-                LOG.info(f'agent stop loop, stop_reason={final_response.stop_reason}, final_response={final_response}')
+                LOG.info(f'agent stop loop, stop_reason={final_response.stop_reason}, usage_tokens={usage_tokens(final_response)}')
                 return
 
             # 还有工具调用，执行工具
