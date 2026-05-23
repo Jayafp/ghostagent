@@ -114,7 +114,8 @@ def _load_prompt_template() -> str:
 
     return _PROMPT_TEMPLATE_CACHE
 
-def get_session_special_info(session_id:str):
+
+def get_session_special_info(session_id: str):
     session_special_file = MEMORY_DIR / Path(f"{session_id}/special_prompt.md")
     if not session_special_file.exists():
         return ""
@@ -125,6 +126,7 @@ def get_session_special_info(session_id:str):
 
     special_prompt = f"\n### 用户的特定要求\n\n⚠️ **这是用户最重要的要求，请记住并遵循它。**\n\n{special_prompt}\n\n"
     return special_prompt
+
 
 def build_system_prompt(session_id: str, user_message: str = "") -> str:
     """
@@ -518,7 +520,7 @@ def agent_loop(message: str, session_id: str) -> Generator[Dict, None, None]:
                 append_message(session_id, "assistant", response_content_blocks)
 
             if final_response.stop_reason != "tool_use":
-                LOG.info(f'agent stop loop, stop_reason={final_response.stop_reason}')
+                LOG.info(f'agent stop loop, stop_reason={final_response.stop_reason}, final_response={final_response}')
                 return
 
             # 还有工具调用，执行工具
