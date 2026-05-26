@@ -464,7 +464,7 @@ def generate_perception(session_id: str, date: str = None, start_line: int = 0) 
         rounds = history_messages.get('rounds', 0)
         org_message_len = history_messages.get('org_message_len', 0)
         if rounds <= MIN_ROUNDS and org_message_len < MAX_MESSAGE_LENGHT:
-            LOG.info(f"rounds too shot, skip generate perception. rounds={rounds}, org_message_len={org_message_len}")
+            LOG.debug(f"rounds too shot, skip generate perception. rounds={rounds}, org_message_len={org_message_len}")
             return result
 
         new_summary = generate_summary(history_messages['message'])
