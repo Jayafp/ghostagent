@@ -1,5 +1,6 @@
 import os
 import atexit
+import threading
 from app.log.logger import LOG
 
 try:
@@ -21,6 +22,7 @@ class ContainerManager:
         self._client = None
         self._containers: dict[str, any] = {}  # session_id -> container
         self._docker_available = False
+        self._lock = threading.Lock()
         self._init_client()
 
     def _init_client(self):
@@ -55,31 +57,32 @@ class ContainerManager:
         if not self._docker_available:
             return None
 
-        if session_id in self._containers:
-            container = self._containers[session_id]
+        with self._lock:
+            if session_id in self._containers:
+                container = self._containers[session_id]
+                try:
+                    container.reload()
+                    if container.status == "running":
+                        return container
+                except (NotFound, APIError):
+                    del self._containers[session_id]
+
+            # 查找已有容器（进程重启后复用）
+            name = self._container_name(session_id)
             try:
+                container = self._client.containers.get(name)
                 container.reload()
                 if container.status == "running":
+                    self._containers[session_id] = container
                     return container
-            except (NotFound, APIError):
-                del self._containers[session_id]
+                else:
+                    container.remove(force=True)
+            except NotFound:
+                pass
+            except APIError as e:
+                LOG.warning(f"查找容器 {name} 失败: {e}")
 
-        # 查找已有容器（进程重启后复用）
-        name = self._container_name(session_id)
-        try:
-            container = self._client.containers.get(name)
-            container.reload()
-            if container.status == "running":
-                self._containers[session_id] = container
-                return container
-            else:
-                container.remove(force=True)
-        except NotFound:
-            pass
-        except APIError as e:
-            LOG.warning(f"查找容器 {name} 失败: {e}")
-
-        return self._create_container(session_id)
+            return self._create_container(session_id)
 
     def _create_container(self, session_id: str):
         """创建新的沙箱容器"""
@@ -109,41 +112,52 @@ class ContainerManager:
 
     def destroy(self, session_id: str):
         """销毁会话对应的沙箱容器"""
-        container = self._containers.pop(session_id, None)
-        if container is None:
-            name = self._container_name(session_id)
-            try:
-                container = self._client.containers.get(name)
-            except (NotFound, APIError):
-                return
+        with self._lock:
+            container = self._containers.pop(session_id, None)
+            if container is None:
+                name = self._container_name(session_id)
+                try:
+                    container = self._client.containers.get(name)
+                except (NotFound, APIError):
+                    return
 
-        try:
-            container.stop(timeout=5)
-            container.remove(force=True)
-            LOG.info(f"沙箱容器已销毁: {container.name}")
-        except (NotFound, APIError) as e:
-            LOG.warning(f"销毁沙箱容器失败: {e}")
+            try:
+                container.stop(timeout=5)
+                container.remove(force=True)
+                LOG.info(f"沙箱容器已销毁: {container.name}")
+            except (NotFound, APIError) as e:
+                LOG.warning(f"销毁沙箱容器失败: {e}")
 
     def cleanup_stale(self):
         """启动时清理残留的 ghostagent 沙箱容器"""
         if not self._docker_available:
             return
 
-        try:
-            containers = self._client.containers.list(
-                all=True,
-                filters={"label": f"ghostagent={CONTAINER_LABEL}"}
-            )
-            for c in containers:
-                try:
-                    c.remove(force=True)
-                    LOG.info(f"清理残留容器: {c.name}")
-                except APIError as e:
-                    LOG.warning(f"清理容器 {c.name} 失败: {e}")
-        except APIError as e:
-            LOG.warning(f"查询残留容器失败: {e}")
+        with self._lock:
+            try:
+                containers = self._client.containers.list(
+                    all=True,
+                    filters={"label": f"ghostagent={CONTAINER_LABEL}"}
+                )
+                for c in containers:
+                    try:
+                        c.remove(force=True)
+                        LOG.info(f"清理残留容器: {c.name}")
+                    except APIError as e:
+                        LOG.warning(f"清理容器 {c.name} 失败: {e}")
+            except APIError as e:
+                LOG.warning(f"查询残留容器失败: {e}")
 
     def destroy_all(self):
         """销毁所有本 manager 管理的容器"""
-        for session_id in list(self._containers.keys()):
-            self.destroy(session_id)
+        with self._lock:
+            for session_id in list(self._containers.keys()):
+                container = self._containers.pop(session_id, None)
+                if container is None:
+                    continue
+                try:
+                    container.stop(timeout=5)
+                    container.remove(force=True)
+                    LOG.info(f"沙箱容器已销毁: {container.name}")
+                except (NotFound, APIError) as e:
+                    LOG.warning(f"销毁沙箱容器失败: {e}")
