@@ -9,6 +9,9 @@ from app.browser.browser_fetch import fetch_content
 from app.browser.web_search import search
 from app.log.logger import LOG
 from app.llm.memory_retrieval import get_retriever
+from app.sandbox.config import SandboxConfig
+from app.sandbox.container_manager import ContainerManager
+from app.sandbox.sandbox_executor import SandboxExecutor
 
 # 每个线程独立的 event loop
 _local = threading.local()
@@ -49,6 +52,26 @@ def _run_async(coro) -> any:
     """
     loop = _get_event_loop()
     return loop.run_until_complete(coro)
+
+
+# 沙箱配置与容器管理（模块级单例）
+_sandbox_config = SandboxConfig()
+_container_manager = ContainerManager(_sandbox_config)
+_container_manager.cleanup_stale()
+_executor_cache: dict[str, SandboxExecutor] = {}  # session_id -> executor
+
+
+def _get_sandbox_executor(session_id: str) -> SandboxExecutor:
+    """获取或创建会话对应的沙箱执行器"""
+    if session_id not in _executor_cache:
+        _executor_cache[session_id] = SandboxExecutor(_container_manager, session_id)
+    return _executor_cache[session_id]
+
+
+def destroy_sandbox(session_id: str):
+    """销毁会话对应的沙箱容器和执行器缓存"""
+    _executor_cache.pop(session_id, None)
+    _container_manager.destroy(session_id)
 
 
 def safe_path(p: str) -> Path:
@@ -339,27 +362,55 @@ def create_tool_handler(
 
 
 # -- The dispatch map: {tool_name: handler} --
+def _bash_handler(**kw):
+    session_id = kw.get("session_id", "")
+    if _sandbox_config.is_sandbox("bash"):
+        return _get_sandbox_executor(session_id).run_bash(kw["command"])
+    return run_bash(kw["command"])
+
+
+def _read_handler(**kw):
+    session_id = kw.get("session_id", "")
+    if _sandbox_config.is_sandbox("read_file"):
+        return _get_sandbox_executor(session_id).run_read(kw["path"], kw.get("limit"))
+    return run_read(kw["path"], kw.get("limit"))
+
+
+def _write_handler(**kw):
+    session_id = kw.get("session_id", "")
+    if _sandbox_config.is_sandbox("write_file"):
+        return _get_sandbox_executor(session_id).run_write(kw["path"], kw["content"])
+    return run_write(kw["path"], kw["content"])
+
+
+def _edit_handler(**kw):
+    session_id = kw.get("session_id", "")
+    if _sandbox_config.is_sandbox("edit_file"):
+        return _get_sandbox_executor(session_id).run_edit(kw["path"], kw["old_text"], kw["new_text"])
+    return run_edit(kw["path"], kw["old_text"], kw["new_text"])
+
+
 TOOL_HANDLERS = {
     "bash": create_tool_handler(
         "bash",
         ["command"],
-        lambda **kw: run_bash(kw["command"])
+        _bash_handler
     ),
     "read_file": create_tool_handler(
         "read_file",
         ["path"],
-        lambda **kw: run_read(kw["path"], kw.get("limit")),
+        _read_handler,
         ["limit"]
     ),
     "write_file": create_tool_handler(
         "write_file",
         ["path", "content"],
-        lambda **kw: run_write(kw["path"], kw["content"])
+        _write_handler
     ),
     "edit_file": create_tool_handler(
         "edit_file",
         ["path", "old_text", "new_text"],
-        lambda **kw: run_edit(kw["path"], kw["old_text"], kw["new_text"])
+        _edit_handler
     ),
     "load_skill": create_tool_handler(
         "load_skill",

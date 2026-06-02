@@ -3,6 +3,7 @@
 import os
 import time
 import json
+import atexit
 from typing import Generator, Dict, Tuple, Optional, List
 from enum import Enum
 
@@ -14,7 +15,7 @@ from app.log.logger import LOG
 
 from app.llm.anthropic_logging import LoggingAnthropic, serialize_messages
 from app.skill.skill_manager import SKILL_MANAGER
-from app.tool.tools import TOOLS, TOOL_HANDLERS
+from app.tool.tools import TOOLS, TOOL_HANDLERS, destroy_sandbox
 from app.llm.context_compact import micro_compact, smart_compact, TOKEN_SOFT_LIMIT, TOKEN_HARD_LIMIT, LLM_MAX_WINDOW
 from app.llm.utils import estimate_tokens, usage_tokens
 from app.llm.session_manager import session
@@ -25,6 +26,18 @@ from app.llm.context_optimizer import optimize_tool_results_for_memory, optimize
 
 client = LoggingAnthropic(base_url=os.getenv("ANTHROPIC_BASE_URL"), api_key=os.getenv("ANTHROPIC_API_KEY"))
 MODEL = os.environ["MODEL_ID"]
+
+
+def _atexit_cleanup():
+    """进程退出时清理所有沙箱容器"""
+    try:
+        from app.tool.tools import _container_manager
+        _container_manager.destroy_all()
+    except Exception:
+        pass
+
+
+atexit.register(_atexit_cleanup)
 
 # 缓存的 System Prompt 模板（懒加载）
 _PROMPT_TEMPLATE_CACHE = None
@@ -465,6 +478,7 @@ def agent_loop(message: str, session_id: str) -> Generator[Dict, None, None]:
     while True:
         # 检查是否被请求终止
         if _is_stopped(session_id):
+            destroy_sandbox(session_id)
             yield {"type": StreamEvent.PROCESS, "content": "\n\n⚠️ 任务已被用户终止\n"}
             LOG.info(f"agent loop 被用户终止 [session_id={session_id}]")
             return
@@ -521,6 +535,7 @@ def agent_loop(message: str, session_id: str) -> Generator[Dict, None, None]:
 
             if final_response.stop_reason != "tool_use":
                 LOG.info(f'agent stop loop, stop_reason={final_response.stop_reason}, usage_tokens={usage_tokens(final_response)}')
+                destroy_sandbox(session_id)
                 return
 
             # 还有工具调用，执行工具
@@ -561,6 +576,7 @@ def agent_loop(message: str, session_id: str) -> Generator[Dict, None, None]:
                 yield {"type": StreamEvent.PROCESS, "content": f"\n❌ 上下文窗口已满，压缩后重试...({error_count}/10)\n"}
                 smart_compact(active_messages, session_id, force=True)
             else:
+                destroy_sandbox(session_id)
                 yield {"type": StreamEvent.PROCESS, "content": f"\n❌ 错误: {str(e)}\n"}
                 return
         except IndexError as e:
@@ -572,5 +588,6 @@ def agent_loop(message: str, session_id: str) -> Generator[Dict, None, None]:
         except Exception as e:
             error_count += 2
             LOG.exception(f"execute error: {e}")
+            destroy_sandbox(session_id)
             yield {"type": StreamEvent.PROCESS, "content": f"\n❌ 错误: {str(e)}\n"}
             return
