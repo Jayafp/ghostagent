@@ -10,4 +10,6 @@ temp
 docs
 demo
 openspec
+sandbox_data
+.claude
 __pycache__
