@@ -52,6 +52,11 @@ def format_history_from_memory(session_id: str, rounds: int = 10) -> list:
                     if isinstance(content, list):
                         cnt_is_answer = is_answer_content(content)
                         content = sorted(content, key=lambda x: priority.get(x.get('type', ''), 2))
+
+                        # 纯回答消息：先关闭前面工具调用累积的代码块，避免最终回答被困在 ``` 内
+                        if cnt_is_answer:
+                            assistant_msg += '\n```\n'
+
                         for block in content:
                             if not isinstance(block, dict):
                                 # 忽略, 正常不会有这样的数据
@@ -59,11 +64,7 @@ def format_history_from_memory(session_id: str, rounds: int = 10) -> list:
                             block_type = block.get('type', '')
                             if 'thinking' == block_type:
                                 # 不回显 thinking 记录
-                                #assistant_msg += block.get('thinking', '')
-                                if cnt_is_answer:
-                                    assistant_msg += '\n```'
-                                if not assistant_msg[:8] == '```\n\n```':
-                                    assistant_msg += '\n'
+                                pass
                             elif 'text' == block_type:
                                 assistant_msg += block.get('text', '')
                                 assistant_msg += '\n'
