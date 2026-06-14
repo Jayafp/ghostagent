@@ -4,6 +4,7 @@ import os
 import time
 import json
 import atexit
+from concurrent.futures import ThreadPoolExecutor
 from typing import Generator, Dict, Tuple, Optional, List
 from enum import Enum
 
@@ -543,19 +544,44 @@ def agent_loop(message: str, session_id: str) -> Generator[Dict, None, None]:
                 return
 
             # 还有工具调用，执行工具
-            results = []
-            for block in response_content_blocks:
-                # todo 并行执行tool
-                if block.type == "tool_use":
-                    # 输出工具调用的cmd
-                    yield {"type": StreamEvent.PROCESS, "content": f"\n🔧 调用工具: {block.name} → {block.input}"}
-                    handler = TOOL_HANDLERS.get(block.name)
+            tool_use_blocks = [b for b in response_content_blocks if b.type == "tool_use"]
+            parallel_enabled = os.getenv("PARALLEL_TOOL_CALLS", "true").lower() == "true"
+
+            def _exec_tool(block):
+                handler = TOOL_HANDLERS.get(block.name)
+                try:
                     output = handler(**block.input, session_id=session_id) if handler else f"Unknown tool: {block.name}"
-                    if not isinstance(output, str):
-                        output = str(output)
+                except Exception as e:
+                    LOG.exception(f"tool '{block.name}' raised: {e}")
+                    output = f"Tool '{block.name}' execution error: {e}"
+                if not isinstance(output, str):
+                    output = str(output)
+                return output
+
+            results = []
+            if parallel_enabled and len(tool_use_blocks) > 1:
+                # 并行模式：先 yield 所有调用信息，再并发执行，再按原顺序 yield 结果
+                for block in tool_use_blocks:
+                    yield {"type": StreamEvent.PROCESS, "content": f"\n🔧 调用工具(并行): {block.name} → {block.input}"}
+
+                pool_size = min(len(tool_use_blocks), 8)
+                with ThreadPoolExecutor(max_workers=pool_size) as ex:
+                    futures = [ex.submit(_exec_tool, b) for b in tool_use_blocks]
+                    outputs = [f.result() for f in futures]
+
+                for block, output in zip(tool_use_blocks, outputs):
                     LOG.info(f">>>tool_call: {block.name}[{block.input}] → {output[:200].replace(chr(10), '. ')}")
                     yield {"type": StreamEvent.PROCESS,
-                           "content": f"\n👉🏻 工具结果: {output[:200].replace("\n", " ")}{'...' if len(output) > 200 else ''}\n"}
+                           "content": f"\n👉🏻 工具结果: {output[:200].replace(chr(10), ' ')}{'...' if len(output) > 200 else ''}\n"}
+                    results.append({"type": "tool_result", "tool_use_id": block.id, "content": output})
+            else:
+                # 串行模式
+                for block in tool_use_blocks:
+                    yield {"type": StreamEvent.PROCESS, "content": f"\n🔧 调用工具: {block.name} → {block.input}"}
+                    output = _exec_tool(block)
+                    LOG.info(f">>>tool_call: {block.name}[{block.input}] → {output[:200].replace(chr(10), '. ')}")
+                    yield {"type": StreamEvent.PROCESS,
+                           "content": f"\n👉🏻 工具结果: {output[:200].replace(chr(10), ' ')}{'...' if len(output) > 200 else ''}\n"}
                     results.append({"type": "tool_result", "tool_use_id": block.id, "content": output})
 
             # 优化一：对过大的 tool_result 进行截断（写入 memory 前）
