@@ -511,6 +511,10 @@ def agent_loop(message: str, session_id: str) -> Generator[Dict, None, None]:
                     messages=input_messages,
                     tools=TOOLS,
                     max_tokens=128000,
+                    thinking={
+                        "type": os.getenv("LLM_THINKING_TYPE", "disabled"),
+                        "budget_tokens": int(os.getenv("budget_tokens", 4096)),
+                    },
             ) as stream:
                 for event in stream:
                     if event.type == "content_block_delta":
