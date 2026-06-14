@@ -16,7 +16,7 @@ from app.log.logger import LOG
 
 from app.llm.anthropic_logging import LoggingAnthropic, serialize_messages
 from app.skill.skill_manager import SKILL_MANAGER
-from app.tool.tools import TOOLS, TOOL_HANDLERS, destroy_sandbox
+from app.tool.tools import TOOLS, TOOL_HANDLERS, PARALLEL_SAFE_TOOLS, destroy_sandbox
 from app.llm.context_compact import micro_compact, smart_compact, TOKEN_SOFT_LIMIT, TOKEN_HARD_LIMIT, LLM_MAX_WINDOW
 from app.llm.utils import estimate_tokens, usage_tokens
 from app.llm.session_manager import session
@@ -558,31 +558,51 @@ def agent_loop(message: str, session_id: str) -> Generator[Dict, None, None]:
                     output = str(output)
                 return output
 
+            def _emit_result(block, output, tag=""):
+                LOG.info(f">>>tool_call: {block.name}[{block.input}] → {output[:200].replace(chr(10), '. ')}")
+                return {"type": StreamEvent.PROCESS,
+                        "content": f"\n👉🏻 工具结果{tag}: {output[:200].replace(chr(10), ' ')}{'...' if len(output) > 200 else ''}\n"}
+
             results = []
-            if parallel_enabled and len(tool_use_blocks) > 1:
-                # 并行模式：先 yield 所有调用信息，再并发执行，再按原顺序 yield 结果
-                for block in tool_use_blocks:
-                    yield {"type": StreamEvent.PROCESS, "content": f"\n🔧 调用工具(并行): {block.name} → {block.input}"}
+            # 按原顺序处理，把"连续的并行安全工具"打包成一组并发执行；
+            # 遇到非并行安全工具则立即串行执行，保证副作用顺序不变。
+            i = 0
+            n = len(tool_use_blocks)
+            while i < n:
+                block = tool_use_blocks[i]
+                is_safe = parallel_enabled and block.name in PARALLEL_SAFE_TOOLS
 
-                pool_size = min(len(tool_use_blocks), 8)
-                with ThreadPoolExecutor(max_workers=pool_size) as ex:
-                    futures = [ex.submit(_exec_tool, b) for b in tool_use_blocks]
-                    outputs = [f.result() for f in futures]
+                if is_safe:
+                    # 收集连续的并行安全工具
+                    batch = []
+                    while i < n and tool_use_blocks[i].name in PARALLEL_SAFE_TOOLS:
+                        batch.append(tool_use_blocks[i])
+                        i += 1
 
-                for block, output in zip(tool_use_blocks, outputs):
-                    LOG.info(f">>>tool_call: {block.name}[{block.input}] → {output[:200].replace(chr(10), '. ')}")
-                    yield {"type": StreamEvent.PROCESS,
-                           "content": f"\n👉🏻 工具结果: {output[:200].replace(chr(10), ' ')}{'...' if len(output) > 200 else ''}\n"}
-                    results.append({"type": "tool_result", "tool_use_id": block.id, "content": output})
-            else:
-                # 串行模式
-                for block in tool_use_blocks:
+                    if len(batch) == 1:
+                        # 只有 1 个，没必要起线程池
+                        b = batch[0]
+                        yield {"type": StreamEvent.PROCESS, "content": f"\n🔧 调用工具: {b.name} → {b.input}"}
+                        output = _exec_tool(b)
+                        yield _emit_result(b, output)
+                        results.append({"type": "tool_result", "tool_use_id": b.id, "content": output})
+                    else:
+                        for b in batch:
+                            yield {"type": StreamEvent.PROCESS, "content": f"\n🔧 调用工具(并行): {b.name} → {b.input}"}
+                        pool_size = min(len(batch), 8)
+                        with ThreadPoolExecutor(max_workers=pool_size) as ex:
+                            futures = [ex.submit(_exec_tool, b) for b in batch]
+                            outputs = [f.result() for f in futures]
+                        for b, output in zip(batch, outputs):
+                            yield _emit_result(b, output)
+                            results.append({"type": "tool_result", "tool_use_id": b.id, "content": output})
+                else:
+                    # 非并行安全工具：串行执行
                     yield {"type": StreamEvent.PROCESS, "content": f"\n🔧 调用工具: {block.name} → {block.input}"}
                     output = _exec_tool(block)
-                    LOG.info(f">>>tool_call: {block.name}[{block.input}] → {output[:200].replace(chr(10), '. ')}")
-                    yield {"type": StreamEvent.PROCESS,
-                           "content": f"\n👉🏻 工具结果: {output[:200].replace(chr(10), ' ')}{'...' if len(output) > 200 else ''}\n"}
+                    yield _emit_result(block, output)
                     results.append({"type": "tool_result", "tool_use_id": block.id, "content": output})
+                    i += 1
 
             # 优化一：对过大的 tool_result 进行截断（写入 memory 前）
             optimized_results = optimize_tool_results_for_memory(results)

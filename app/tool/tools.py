@@ -439,6 +439,17 @@ TOOL_HANDLERS = {
     ),
 }
 
+# 并行安全的工具集合：只读 / 无共享副作用，可在同一 session 内并发执行
+# 其余工具（如 bash、write_file、edit_file 等）共享沙箱 cwd / 环境 / 文件，必须串行
+PARALLEL_SAFE_TOOLS = {
+    "read_file",
+    "load_skill",
+    "fallback_browser_fetch",
+    "web_search",
+    "memory_search",
+    "read_skill_resource",
+}
+
 TOOLS = [
     {
         "name": "bash",
