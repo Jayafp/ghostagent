@@ -431,6 +431,7 @@ def run():
                     show_label=False,
                     interactive=True,
                     elem_classes=["image-upload-box"],
+                    placeholder="上传图片",
                 )
 
                 msg_input = gr.Textbox(
