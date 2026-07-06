@@ -9,6 +9,7 @@ from app.llm.react_agent import agent_loop, StreamEvent
 from web.history_message import format_history_from_memory
 from app.log.logger import LOG
 from app.llm.image_info import get_image_info
+from app.tool.task_manager import format_task_progress_panel
 
 
 # 当前上传的图片路径（一次性使用，仅当前对话有效）
@@ -428,8 +429,18 @@ async def chat(message, history, session_id):
             output = ""
             if process_text.strip():
                 output += f"```\n{process_text.strip()}\n```"
+            # 任务进度面板：存在未结束的任务计划时，嵌在工具过程与最终回复之间
+            try:
+                task_panel = format_task_progress_panel(session_id)
+            except Exception as e:
+                LOG.warning(f"渲染任务进度面板失败 [{session_id}]: {e}")
+                task_panel = ""
+            if task_panel:
+                if output:
+                    output += "\n"
+                output += task_panel
             if pending_text:
-                if process_text.strip():
+                if output:
                     output += "\n"
                 output += pending_text
             return output

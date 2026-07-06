@@ -38,10 +38,17 @@ STATUS_COMPLETED = "completed"
 
 _VALID_STATUS = {STATUS_PENDING, STATUS_IN_PROGRESS, STATUS_COMPLETED}
 
-# 状态图标
+# 状态图标（模型可见的紧凑文本快照用）
 _ICON = {
     STATUS_PENDING: "○",
     STATUS_IN_PROGRESS: "●",
+    STATUS_COMPLETED: "✅",
+}
+
+# UI 进度面板用的状态 emoji（区别于 _ICON 的纯字符图标）
+_UI_EMOJI = {
+    STATUS_PENDING: "⬜",
+    STATUS_IN_PROGRESS: "🔄",
     STATUS_COMPLETED: "✅",
 }
 
@@ -123,9 +130,38 @@ def has_active_tasks(session_id: str) -> bool:
 
 
 def get_all_tasks(session_id: str) -> List[Dict]:
-    """返回按 id 排序的任务列表（供 UI 渲染）。无任务返回空列表。"""
-    store = _load(session_id)
-    return [store["tasks"][tid] for tid in sorted(store["tasks"])]
+    """返回按 id 排序的任务列表（供 UI 渲染）。无任务返回空列表。
+
+    加锁以保证与 task 工具的写入互斥：UI 线程（webui）与 agent 线程
+    （agent_loop）并发访问任务存储时，避免迭代过程中字典被改写。
+    """
+    with _lock:
+        store = _load(session_id)
+        return [store["tasks"][tid] for tid in sorted(store["tasks"])]
+
+
+def format_task_progress_panel(session_id: str) -> str:
+    """
+    格式化任务进度面板（供 Web UI 在助手回复中嵌入展示）。
+
+    格式:
+        📋 任务进度：{已完成数}/{总数}
+          ⬜ #1 任务标题
+          🔄 #2 任务标题
+          ✅ #3 任务标题
+
+    无任务（或任务计划已结束）时返回空字符串，UI 据此隐藏面板。
+    """
+    tasks = get_all_tasks(session_id)
+    if not tasks:
+        return ""
+    total = len(tasks)
+    done = sum(1 for t in tasks if t.get("status") == STATUS_COMPLETED)
+    lines = [f"📋 任务进度：{done}/{total}"]
+    for t in tasks:
+        emoji = _UI_EMOJI.get(t.get("status", STATUS_PENDING), "❓")
+        lines.append(f"  {emoji} #{t.get('id')} {t.get('subject', '')}")
+    return "\n".join(lines)
 
 
 def format_task_snapshot(session_id: str, include_notes: bool = True) -> str:
