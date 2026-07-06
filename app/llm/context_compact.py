@@ -25,6 +25,7 @@ from app.llm.utils import estimate_tokens, is_pure_user_message
 from app.llm.context_optimizer import optimize_tool_results_for_llm, optimize_thinking_for_llm
 from app.log.logger import LOG
 from app.llm.memory_manager import MEMORY_DIR
+from app.tool.task_manager import has_active_tasks, format_task_snapshot
 
 # ============ 配置常量 ============
 # 256K 上下文窗口的阈值设置
@@ -458,6 +459,8 @@ def generate_summary(messages: List[Dict], api_key: str = None, base_url: str = 
 
 3. 保留所有不透明标识符的原始写法（不得缩短或重构），包括 UUID、哈希值、ID、令牌、API 密钥、主机名、IP 地址、端口、URL 和文件名。
 
+4. 如果对话中使用了任务管理工具（task_create / list_task / update_task / complete_task / finish_task），必须在摘要中保留任务图的关键状态：哪些任务已完成、哪个进行中、哪些待办及其依赖关系、以及关键进度笔记。这些信息对后续继续任务至关重要，不得省略。
+
 **对话内容：**
 {conversation_text}
 
@@ -488,19 +491,29 @@ def generate_summary(messages: List[Dict], api_key: str = None, base_url: str = 
         return f"[之前的对话内容已归档，共 {len(messages)} 条消息]"
 
 
-def create_summary_message(summary: str) -> Dict:
+def create_summary_message(summary: str, session_id: str = None) -> Dict:
     """
-    创建摘要消息对象
+    创建摘要消息对象。
+
+    若 session 存在未结束的任务计划，在摘要末尾追加当前任务进度快照
+    （来自 task_manager 的权威状态，不依赖摘要模型是否真的保留了任务信息），
+    以保证上下文压缩后 agent 仍能继续未完成的任务。
     """
-    return {
-        "role": "assistant",
-        "content": f"""📋 **[历史对话摘要]**
+    content = f"""📋 **[历史对话摘要]**
 
 {summary}
+"""
+    if session_id:
+        try:
+            if has_active_tasks(session_id):
+                snapshot = format_task_snapshot(session_id, include_notes=True)
+                if snapshot:
+                    content += f"\n---\n## 📌 当前任务进度（任务图 DAG，权威状态）\n\n{snapshot}\n"
+        except Exception as e:
+            LOG.warning(f"附加任务进度快照失败 [{session_id}]: {e}")
 
----
-*(以上为之前对话的压缩摘要，详细内容已保存到 memory 目录)*"""
-    }
+    content += f"\n---\n*(以上为之前对话的压缩摘要，详细内容已保存到 memory 目录)*"
+    return {"role": "assistant", "content": content}
 
 
 def smart_compact(
@@ -572,7 +585,7 @@ def smart_compact(
 
     # 步骤3: 生成摘要
     summary = generate_summary(compress_messages)
-    summary_message = create_summary_message(summary)
+    summary_message = create_summary_message(summary, session_id=session_id)
 
     # 步骤4: 组装新的消息列表
     new_messages = [summary_message] + keep_messages
@@ -581,7 +594,7 @@ def smart_compact(
     # 步骤5: 处理极端情况 - 即使按比例保留仍超过硬限制（后备保护）
     if new_tokens > TOKEN_HARD_LIMIT:
         LOG.warning(f"保留 {adaptive_rounds} 轮后仍超过硬限制 ({new_tokens} > {TOKEN_HARD_LIMIT})，进入紧急压缩模式")
-        new_messages = _emergency_compact(summary_message, keep_messages, compress_messages)
+        new_messages = _emergency_compact(summary_message, keep_messages, compress_messages, session_id=session_id)
 
     final_tokens = estimate_tokens(new_messages)
     LOG.info(f"压缩完成: {current_tokens} -> {final_tokens} tokens，减少 {current_tokens - final_tokens} tokens, cost: {(time.perf_counter() - start):.3f}s")
@@ -592,7 +605,8 @@ def smart_compact(
 def _emergency_compact(
     summary_message: Dict,
     keep_messages: List[Dict],
-    compress_messages: List[Dict]
+    compress_messages: List[Dict],
+    session_id: str = None
 ) -> List[Dict]:
     """
     紧急压缩模式：当标准压缩后仍超过硬限制时调用
@@ -618,7 +632,7 @@ def _emergency_compact(
             # 将额外需要压缩的消息合并到原压缩消息中，重新生成摘要
             all_compress = compress_messages + additional_compress
             combined_summary = generate_summary(all_compress)
-            combined_summary_message = create_summary_message(combined_summary)
+            combined_summary_message = create_summary_message(combined_summary, session_id=session_id)
         else:
             combined_summary_message = summary_message
             reduced_keep = keep_messages
@@ -642,7 +656,7 @@ def _emergency_compact(
     # 重新生成包含保留消息的摘要
     all_messages_for_summary = compress_messages + keep_messages
     final_summary = generate_summary(all_messages_for_summary)
-    final_summary_message = create_summary_message(final_summary)
+    final_summary_message = create_summary_message(final_summary, session_id=session_id)
 
     if last_messages:
         final_messages = [final_summary_message] + last_messages

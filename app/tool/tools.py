@@ -12,6 +12,9 @@ from app.llm.memory_retrieval import get_retriever
 from app.sandbox.config import SandboxConfig
 from app.sandbox.container_manager import ContainerManager
 from app.sandbox.sandbox_executor import SandboxExecutor
+from app.tool.task_manager import (
+    create_tasks, list_tasks, update_task, complete_task, finish_task,
+)
 
 # 每个线程独立的 event loop
 _local = threading.local()
@@ -390,6 +393,29 @@ def _edit_handler(**kw):
     return run_edit(kw["path"], kw["old_text"], kw["new_text"])
 
 
+def _task_create_handler(**kw):
+    return create_tasks(kw["session_id"], kw["tasks"])
+
+
+def _list_task_handler(**kw):
+    return list_tasks(kw["session_id"])
+
+
+def _update_task_handler(**kw):
+    return update_task(
+        kw["session_id"], kw["task_id"],
+        kw.get("status"), kw.get("notes"), kw.get("description"),
+    )
+
+
+def _complete_task_handler(**kw):
+    return complete_task(kw["session_id"], kw["task_id"])
+
+
+def _finish_task_handler(**kw):
+    return finish_task(kw["session_id"])
+
+
 TOOL_HANDLERS = {
     "bash": create_tool_handler(
         "bash",
@@ -436,6 +462,31 @@ TOOL_HANDLERS = {
         "read_skill_resource",
         ["skill_name", "resource_path"],
         lambda **kw: read_skill_resource(kw["skill_name"], kw["resource_path"])
+    ),
+    "task_create": create_tool_handler(
+        "task_create",
+        ["tasks", "session_id"],
+        _task_create_handler
+    ),
+    "list_task": create_tool_handler(
+        "list_task",
+        ["session_id"],
+        _list_task_handler
+    ),
+    "update_task": create_tool_handler(
+        "update_task",
+        ["task_id", "session_id"],
+        _update_task_handler
+    ),
+    "complete_task": create_tool_handler(
+        "complete_task",
+        ["task_id", "session_id"],
+        _complete_task_handler
+    ),
+    "finish_task": create_tool_handler(
+        "finish_task",
+        ["session_id"],
+        _finish_task_handler
     ),
 }
 
@@ -616,6 +667,118 @@ TOOLS = [
                 }
             },
             "required": ["skill_name", "resource_path"]
+        }
+    },
+    {
+        "name": "task_create",
+        "description": """创建任务管理任务图（DAG）中的任务。每个任务有一个 subject（简短标题）和可选的 description（详细说明 / 完成标准）。dependencies 是该任务依赖的【已存在】任务 ID 列表——被依赖的任务必须先 complete_task 完成后，本任务才能开始。DAG 中至少要有一个不依赖任何任务的"起始任务"。
+
+**适合使用**：用户请求需要 3 个及以上子步骤、多文件改动、先调研后实现再验证等长链路复杂任务；需要在长链路工作中保持可恢复的进度跟踪时。
+
+**不建议使用**：单步即可完成的简单任务；纯问答 / 查资料 / 闲聊；一两步的简单修改。不要为每个小动作都建任务。
+
+**使用流程**：先拆解 → task_create 建图（先建无依赖的起始任务，拿到 ID 后再建有依赖的任务）→ list_task 查看 → update_task 标记进行中并记录进度 → complete_task 完成 → 全部完成后 finish_task 结束。""",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "tasks": {
+                    "type": "array",
+                    "description": "要创建的任务列表。每个任务: {subject(必填, 简短标题); description(选填, 详细说明); dependencies(选填, 依赖的已存在任务 ID 数组)}。注意: dependencies 只能引用本次调用之前已存在的任务 ID，同一批内的任务不能相互依赖。",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "subject": {
+                                "type": "string",
+                                "description": "任务简短标题（祈使句，如 '分析需求'）"
+                            },
+                            "description": {
+                                "type": "string",
+                                "description": "任务详细说明，包含完成标准和关键步骤"
+                            },
+                            "dependencies": {
+                                "type": "array",
+                                "items": {"type": "integer"},
+                                "description": "依赖的已存在任务 ID 列表，这些任务完成后本任务才能开始"
+                            }
+                        },
+                        "required": ["subject"]
+                    }
+                }
+            },
+            "required": ["tasks"]
+        }
+    },
+    {
+        "name": "list_task",
+        "description": """列出当前任务图（DAG）中所有任务的状态、依赖关系与进度笔记，并标记出当前可以开始执行的待办任务（所有依赖已完成的 pending 任务）。
+
+**适合使用**：上下文压缩后恢复任务进度；不确定下一步做什么时；开始或恢复长链路任务时；每次 complete_task 后确认下一个任务。
+
+**不建议使用**：没有进行中的任务计划时（会返回空提示）；状态没变时不必重复调用。""",
+        "input_schema": {
+            "type": "object",
+            "properties": {}
+        }
+    },
+    {
+        "name": "update_task",
+        "description": """更新任务的状态、进度笔记或描述。status 可选: pending(待办)、in_progress(进行中)、completed(已完成)。
+
+**适合使用**：开始执行某任务前，将其标记为 in_progress 并在 notes 中记录执行计划 / 关键发现；任务推进中追加进度笔记（notes 会追加到现有笔记末尾，不会覆盖，便于保留进度历史）；调整任务描述。
+
+**不建议使用**：标记任务完成请用 complete_task（语义更明确）；不能修改 dependencies（依赖在创建时确定，如需调整请 finish_task 后重新规划）。""",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task_id": {
+                    "type": "integer",
+                    "description": "要更新的任务 ID"
+                },
+                "status": {
+                    "type": "string",
+                    "enum": ["pending", "in_progress", "completed"],
+                    "description": "新状态"
+                },
+                "notes": {
+                    "type": "string",
+                    "description": "进度笔记，会追加到现有笔记末尾（不覆盖）。请写清当前进展、关键决策、遇到的问题"
+                },
+                "description": {
+                    "type": "string",
+                    "description": "新的任务描述（会覆盖原描述）"
+                }
+            },
+            "required": ["task_id"]
+        }
+    },
+    {
+        "name": "complete_task",
+        "description": """标记单个任务为已完成，并返回因此被解锁（所有依赖已满足）的后续待办任务。
+
+**适合使用**：一个任务的所有工作真正做完后调用；每完成一个任务就调用一次，保持任务图状态准确，以便正确解锁后续任务。
+
+**不建议使用**：任务还没真正完成时（先 update_task 记录进度继续做）；任务无法完成需要放弃时（应向用户说明，并可用 finish_task 收尾）。""",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task_id": {
+                    "type": "integer",
+                    "description": "要标记完成的任务 ID"
+                }
+            },
+            "required": ["task_id"]
+        }
+    },
+    {
+        "name": "finish_task",
+        "description": """结束整个任务计划：要求所有任务都已完成，然后清空任务存储，之后可以开始新的任务计划。
+
+**适合使用**：任务图中所有任务都已 complete_task 后，用来收尾并释放任务管理状态；用户确认整体工作结束时。
+
+**不建议使用**：还有未完成任务时（会拒绝并返回未完成列表，请先 complete_task）；只想暂停任务时（不需要调用，任务状态会自动保留，随时可用 list_task 恢复）。""",
+        "input_schema": {
+            "type": "object",
+            "properties": {}
         }
     }
 ]

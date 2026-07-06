@@ -97,6 +97,97 @@ SESSION_REDIRECT_JS = """
 """
 
 
+# JS: 粘性滚动 - 用户上滚时停止跟随，回到底部时恢复跟随
+STICKY_SCROLL_JS = """
+<script>
+(function() {
+    const BOTTOM_THRESHOLD = 5;
+    let follow = true;
+    let programmaticScroll = false;
+    let scrollEl = null;
+    let observer = null;
+
+    function isNearBottom(el) {
+        return el.scrollHeight - el.scrollTop - el.clientHeight <= BOTTOM_THRESHOLD;
+    }
+
+    function findScrollContainer(root) {
+        if (!root) return null;
+        // 候选：root 本身和它所有后代里 overflow-y 为 auto/scroll 且实际可滚动的最深节点
+        const candidates = [root, ...root.querySelectorAll('*')];
+        let best = null;
+        for (const el of candidates) {
+            const style = getComputedStyle(el);
+            const oy = style.overflowY;
+            if ((oy === 'auto' || oy === 'scroll') && el.scrollHeight > el.clientHeight + 1) {
+                best = el;  // 取最后一个（最深的），通常就是消息列表容器
+            }
+        }
+        return best;
+    }
+
+    function bind(el) {
+        if (!el || el === scrollEl) return;
+        scrollEl = el;
+        window.__chatScrollEl = el;
+        window.__chatFollow = () => follow;
+
+        el.addEventListener('scroll', () => {
+            if (programmaticScroll) return;
+            follow = isNearBottom(el);
+        }, { passive: true });
+
+        el.addEventListener('wheel', (e) => {
+            if (e.deltaY < 0) follow = false;
+        }, { passive: true });
+
+        el.addEventListener('touchmove', () => {
+            if (!isNearBottom(el)) follow = false;
+        }, { passive: true });
+
+        if (observer) observer.disconnect();
+        observer = new MutationObserver(() => {
+            if (!follow || !scrollEl) return;
+            programmaticScroll = true;
+            scrollEl.scrollTop = scrollEl.scrollHeight;
+            requestAnimationFrame(() => { programmaticScroll = false; });
+        });
+        observer.observe(el, { childList: true, subtree: true, characterData: true });
+
+        // 初始滚到底
+        programmaticScroll = true;
+        el.scrollTop = el.scrollHeight;
+        requestAnimationFrame(() => { programmaticScroll = false; });
+    }
+
+    function tryAttach() {
+        const root = document.getElementById('main_chatbot');
+        if (!root) return false;
+        const sc = findScrollContainer(root);
+        if (!sc) return false;
+        bind(sc);
+        return true;
+    }
+
+    // 等待 Gradio 渲染出 chatbot；attach 后继续观察容器替换
+    const rootObserver = new MutationObserver(() => {
+        const root = document.getElementById('main_chatbot');
+        if (!root) return;
+        const sc = findScrollContainer(root);
+        if (sc && sc !== scrollEl) bind(sc);
+    });
+    rootObserver.observe(document.body, { childList: true, subtree: true });
+
+    // 启动时尝试一次（一般会失败，等 MutationObserver 兜底）
+    if (!tryAttach()) {
+        const t = setInterval(() => { if (tryAttach()) clearInterval(t); }, 200);
+        setTimeout(() => clearInterval(t), 15000);
+    }
+})();
+</script>
+"""
+
+
 # 紧凑样式 CSS
 COMPACT_CSS = """
 /* 整体布局 - 确保聊天区域填满剩余空间 */
@@ -417,7 +508,8 @@ def run():
                 height="calc(100vh - 235px)",
                 min_height="400px",
                 show_label=False,
-                autoscroll=True,
+                autoscroll=False,
+                elem_id="main_chatbot",
             )
 
             # 输入区域（包含图片上传、文本输入、发送按钮）
@@ -605,6 +697,6 @@ def run():
     webui.launch(
         server_name="0.0.0.0",
         server_port=7860,
-        head=SESSION_REDIRECT_JS,
+        head=SESSION_REDIRECT_JS + STICKY_SCROLL_JS,
         css=COMPACT_CSS,
     )
