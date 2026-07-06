@@ -12,7 +12,7 @@ docker compose up -d
 启动后验证 JSON API 可用：
 
 ```bash
-curl 'http://localhost:8080/search?q=test&format=json'
+curl 'http://localhost:8182/search?q=test&format=json'
 ```
 
 返回 JSON 即正常。

@@ -11,3 +11,19 @@
 python3 main.py
 ```
 访问 http://127.0.0.1:7860/
+
+## searxng搜索说明
+
+默认配置了vpn代理，端口是 **10902**。
+
+### 启动 searxng docker 容器
+cd <project>/docker/searxng
+docker compose up -d
+
+### 重启searxng容器
+cd <project>/docker/searxng
+docker compose -f docker-compose.yml restart 2>&1
+
+### 测试searxng搜索结果
+curl 'http://localhost:8182/search?q=test&format=json'
+

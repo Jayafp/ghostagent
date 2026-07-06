@@ -6,7 +6,7 @@ from typing import List, Dict, Union
 import aiohttp
 from app.log.logger import LOG
 
-SEARXNG_URL = os.getenv('searxng_url', 'http://localhost:8080')
+SEARXNG_URL = os.getenv('searxng_url', 'http://localhost:8182')
 SEARXNG_TIMEOUT = int(os.getenv('searxng_timeout', '10'))
 # 引擎列表（逗号分隔），SearxNG 会聚合多源结果，单引擎被封不影响整体
 SEARXNG_ENGINES = os.getenv('searxng_engines', 'google,bing,duckduckgo,baidu')
