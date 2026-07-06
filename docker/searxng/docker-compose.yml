@@ -1,0 +1,18 @@
+# SearxNG 元搜索引擎部署
+# 启动: docker compose up -d
+# 停止: docker compose down
+# 日志: docker compose logs -f searxng
+
+services:
+  searxng:
+    image: searxng/searxng:latest
+    container_name: searxng
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./settings.yml:/etc/searxng/settings.yml:ro
+    # 让容器内可通过 host.docker.internal 访问宿主机代理
+    # Mac/Windows Docker Desktop 原生支持；Linux 需此配置才生效
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
