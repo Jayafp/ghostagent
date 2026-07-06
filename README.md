@@ -18,10 +18,12 @@ python3 main.py
 
 ### 启动 searxng docker 容器
 cd <project>/docker/searxng
+
 docker compose up -d
 
 ### 重启searxng容器
 cd <project>/docker/searxng
+
 docker compose -f docker-compose.yml restart 2>&1
 
 ### 测试searxng搜索结果
