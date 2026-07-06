@@ -1,5 +1,6 @@
 import asyncio
 import os
+import subprocess
 from typing import List, Dict, Union
 
 import aiohttp
@@ -9,6 +10,46 @@ SEARXNG_URL = os.getenv('searxng_url', 'http://localhost:8080')
 SEARXNG_TIMEOUT = int(os.getenv('searxng_timeout', '10'))
 # 引擎列表（逗号分隔），SearxNG 会聚合多源结果，单引擎被封不影响整体
 SEARXNG_ENGINES = os.getenv('searxng_engines', 'google,bing,duckduckgo,baidu')
+
+# docker-compose 文件路径（app/browser/searxng_search.py → 项目根/docker/searxng/）
+_COMPOSE_FILE = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    'docker', 'searxng', 'docker-compose.yml',
+)
+
+
+def _is_searxng_running() -> bool:
+    """检查 searxng 容器是否在运行"""
+    try:
+        result = subprocess.run(
+            ['docker', 'inspect', '-f', '{{.State.Running}}', 'searxng'],
+            capture_output=True, text=True, timeout=5,
+        )
+        return result.stdout.strip() == 'true'
+    except Exception:
+        return False
+
+
+def ensure_searxng_running() -> None:
+    """
+    确保 SearxNG 容器已启动
+
+    未运行则通过 docker compose up -d 启动；已运行则不操作（不重启，避免
+    影响正在进行的搜索）。如需应用 settings.yml 改动，用项目根的 searxng.sh
+    脚本（会重启已运行的容器）。
+    """
+    if _is_searxng_running():
+        LOG.info('searxng container already running')
+        return
+    try:
+        LOG.info('starting searxng container...')
+        subprocess.run(
+            ['docker', 'compose', '-f', _COMPOSE_FILE, 'up', '-d'],
+            capture_output=True, text=True, timeout=60, check=True,
+        )
+        LOG.info('searxng container started')
+    except Exception as e:
+        LOG.error(f'failed to start searxng container: {e}')
 
 
 async def searxng_search(query: str) -> Union[List[Dict[str, str]], List[str]]:
