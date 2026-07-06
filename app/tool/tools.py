@@ -15,10 +15,14 @@ from app.sandbox.sandbox_executor import SandboxExecutor
 from app.tool.task_manager import (
     create_tasks, list_tasks, update_task, complete_task, finish_task,
 )
+from datetime import datetime
 
 # 每个线程独立的 event loop
 _local = threading.local()
 
+now = datetime.now()
+cnt_year = now.year
+cnt_month = now.month
 
 def _get_event_loop() -> asyncio.AbstractEventLoop:
     """
@@ -629,7 +633,7 @@ TOOLS = [
     },
     {
         "name": "web_search",
-        "description": "Google 搜索工具，返回搜索结果列表（包含标题、URL、摘要）",
+        "description": f"Google 搜索工具，返回搜索结果列表（包含标题、URL、摘要）\n重要提示 - 在搜索查询中使用正确的年份：\n- 当前月份是 {cnt_year} 年 {cnt_month} 月。在搜索最新信息、文档或当前事件时，你必须使用此年份。\n- 示例：如果用户要求\"最新的 React 文档\"，搜索\"React 文档\"时使用当前年份，而不是去年。",
         "input_schema": {
             "type": "object",
             "properties": {
