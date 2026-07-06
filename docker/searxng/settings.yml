@@ -1,15 +1,21 @@
 # SearxNG 配置
 # 文档: https://docs.searxng.org/admin/settings/settings.html
-# use_default_settings 继承镜像默认配置，此处仅覆盖差异项
+# use_default_settings.engines.keep_only 只保留指定引擎（禁用其他所有）
+# engines 段显式启用这两个引擎（部分版本默认 disabled）
+# 注意：SearxNG 2026.7.6 无 google 主引擎，主搜索由 google cse 提供
 
-use_default_settings: true
+use_default_settings:
+  engines:
+    keep_only:
+      - google cse
+      - baidu
 
 server:
   # 生产环境请更换此 secret_key（可用 `openssl rand -hex 32` 生成）
   secret_key: "a3f7b2e9c1d8e4f6a2b5c9d1e7f3a4b8c6d2e9f5a1b7c3d8e4f6a2b5c9d1e7f3"
   bind_address: "0.0.0.0"
   port: 8080
-  limiter: false          # 私有实例，关闭对调用方的限流
+  limiter: false          # 私有实例，关闭对调用方限流
   public_instance: false
 
 search:
@@ -28,13 +34,8 @@ outgoing:
   proxies:
     all://: 'http://host.docker.internal:10902'
 
-# 显式启用目标引擎（确保 baidu 等非默认引擎可用）
 engines:
-  - name: google
-    disabled: false
-  - name: bing
-    disabled: false
-  - name: duckduckgo
+  - name: google cse
     disabled: false
   - name: baidu
     disabled: false

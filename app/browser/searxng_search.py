@@ -9,7 +9,7 @@ from app.log.logger import LOG
 SEARXNG_URL = os.getenv('searxng_url', 'http://localhost:8182')
 SEARXNG_TIMEOUT = int(os.getenv('searxng_timeout', '10'))
 # 引擎列表（逗号分隔），SearxNG 会聚合多源结果，单引擎被封不影响整体
-SEARXNG_ENGINES = os.getenv('searxng_engines', 'google,bing,duckduckgo,baidu')
+SEARXNG_ENGINES = os.getenv('searxng_engines', 'google cse,baidu')
 
 # docker-compose 文件路径（app/browser/searxng_search.py → 项目根/docker/searxng/）
 _COMPOSE_FILE = os.path.join(
@@ -106,4 +106,4 @@ async def searxng_search(query: str) -> Union[List[Dict[str, str]], List[str]]:
 
 
 if __name__ == '__main__':
-    print(asyncio.run(searxng_search('Claude Code')))
+    print(asyncio.run(searxng_search('阿里巴巴 BABA 股价下跌 2026')))
