@@ -132,7 +132,7 @@ async def google_search(query: str, retry: bool = True) -> Union[List[Dict[str, 
             await browser.close()
 
         LOG.info(f'google search, query={query}, result_count={len(results)}')
-        return results[:5]
+        return results[:10]
 
     except Exception as e:
         LOG.error(f'google search, query={query}, retry={retry}, error={e}')

@@ -96,7 +96,7 @@ async def searxng_search(query: str) -> Union[List[Dict[str, str]], List[str]]:
             }
             for r in data.get('results', [])
             if r.get('title') and r.get('url')
-        ][:5]
+        ][:10]
 
         LOG.info(f'searxng search, query={query}, result_count={len(results)}')
         return results

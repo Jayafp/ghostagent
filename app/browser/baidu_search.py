@@ -209,7 +209,7 @@ async def baidu_search(query: str, retry: bool = True) -> Union[List[Dict[str, s
         results = [r for r in results if 'www.baidu.com/s' not in r['url']]
 
         # 取前 5 条结果
-        results = results[:5]
+        results = results[:10]
 
         # 解码百度跳转链接
         results = decode_baidu_urls(results)
