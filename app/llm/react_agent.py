@@ -16,7 +16,7 @@ from app.log.logger import LOG
 
 from app.llm.anthropic_logging import LoggingAnthropic, serialize_messages
 from app.skill.skill_manager import SKILL_MANAGER
-from app.tool.tools import TOOLS, TOOL_HANDLERS, PARALLEL_SAFE_TOOLS, destroy_sandbox
+from app.tool.tools import TOOLS, TOOL_HANDLERS, PARALLEL_SAFE_TOOLS, destroy_sandbox, TASK_TOOLS
 from app.llm.context_compact import micro_compact, smart_compact, TOKEN_SOFT_LIMIT, TOKEN_HARD_LIMIT, LLM_MAX_WINDOW
 from app.llm.utils import estimate_tokens, usage_tokens
 from app.llm.session_manager import session
@@ -208,10 +208,12 @@ class StreamEvent(str, Enum):
     - PROCESS：显示为灰色/辅助信息区域
     - ANSWER：显示为主要对话内容
     - TEXT：实时拼接显示
+    - TASK：任务图状态变更，UI 据此刷新任务进度面板
     """
     PROCESS = "process"
     ANSWER = "answer"
     TEXT = "text"
+    TASK = "task"
 
 
 # -- The core pattern: a while loop that calls tools until the model stops --
@@ -603,6 +605,10 @@ def agent_loop(message: str, session_id: str) -> Generator[Dict, None, None]:
                     yield _emit_result(block, output)
                     results.append({"type": "tool_result", "tool_use_id": block.id, "content": output})
                     i += 1
+
+            # 任务管理工具执行后会改变任务图状态，通知 UI 刷新任务进度面板
+            if any(b.name in TASK_TOOLS for b in tool_use_blocks):
+                yield {"type": StreamEvent.TASK, "content": ""}
 
             # 优化一：对过大的 tool_result 进行截断（写入 memory 前）
             optimized_results = optimize_tool_results_for_memory(results)

@@ -58,4 +58,10 @@ For multi-step tasks, state a brief plan:
 3. [Step] → verify: [check]
 ```
 
+**All the test codes are placed in the "test" directory.**
+
 Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
+
+# 项目环境说明
+- 项目使用 Python 开发，使用 conda 管理依赖，当你需要运行项目 或者 安装依赖时，请使用 ```conda activate ghostagent``` 先激活环境
+- 如果你需要访问 **非国内的网站 或 安装工具&软件包**，可以使用本地的 http/https 代理，代理地址为 ```https://127.0.0.1:10900```。代理的端口可能会自增，当 10900 不可以时，可以尝试 10901/19902...10909 ，如果都不可用你可以提示我，可能是本地vpn代理没有开启。

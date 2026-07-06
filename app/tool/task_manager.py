@@ -122,6 +122,12 @@ def has_active_tasks(session_id: str) -> bool:
     return bool(store["tasks"]) and not store["finished"]
 
 
+def get_all_tasks(session_id: str) -> List[Dict]:
+    """返回按 id 排序的任务列表（供 UI 渲染）。无任务返回空列表。"""
+    store = _load(session_id)
+    return [store["tasks"][tid] for tid in sorted(store["tasks"])]
+
+
 def format_task_snapshot(session_id: str, include_notes: bool = True) -> str:
     """
     格式化任务图快照为紧凑文本。无任务返回空字符串。

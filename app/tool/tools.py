@@ -501,6 +501,15 @@ PARALLEL_SAFE_TOOLS = {
     "read_skill_resource",
 }
 
+# 任务管理工具集合：执行后会改变任务图状态，需通知 UI 刷新任务进度面板
+TASK_TOOLS = {
+    "task_create",
+    "list_task",
+    "update_task",
+    "complete_task",
+    "finish_task",
+}
+
 TOOLS = [
     {
         "name": "bash",
