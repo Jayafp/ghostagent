@@ -1,104 +1,97 @@
 from app.llm.memory_manager import load_recent_messages
-from app.llm.utils import is_pure_user_message, is_answer_content
+from app.llm.utils import is_pure_user_message
 from app.log.logger import LOG
+from web.render import render_segments
 
 priority = {'thinking': 0, 'text': 1}
 
 
-def append_history_message(history, user_msg, assistant_msg):
-    if assistant_msg[:8] == '```\n\n```':
-        assistant_msg = assistant_msg[8:]
-    history.append({"role": "user", "content": user_msg})
-    history.append({"role": "assistant", "content": assistant_msg})
+def _append_segment(segments, kind, text):
+    """把一段文本归入段落：与末段同类型则合并，否则新建。"""
+    if segments and segments[-1]["kind"] == kind:
+        segments[-1]["text"] += text
+    else:
+        segments.append({"kind": kind, "text": text})
+
+
+def _blocks_to_segments(content, segments):
+    """把一条消息的 content 块列表追加进 segments（thinking 不回显）。
+
+    块内按 priority 排序，保证 text 在 tool_use 之前（与实时流式输出顺序一致）。
+    """
+    blocks = sorted(content, key=lambda x: priority.get(x.get("type", ""), 2))
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        btype = block.get("type", "")
+        if btype == "thinking":
+            continue
+        elif btype == "text":
+            _append_segment(segments, "text", block.get("text", "") + "\n")
+        elif btype == "tool_use":
+            _append_segment(segments, "process", f"🔧 调用工具: {block.get('input')}\n")
+        elif btype == "tool_result":
+            tr = block.get("content", "")
+            if not isinstance(tr, str):
+                tr = str(tr)
+            if len(tr) > 200:
+                tr = tr[:200].replace("\n", " ") + "..."
+            else:
+                tr = tr.replace("\n", " ")
+            _append_segment(segments, "process", f"👉🏻 工具结果:{tr}\n")
 
 
 def format_history_from_memory(session_id: str, rounds: int = 10) -> list:
     """
-    从 memory 加载历史对话并格式化为 Gradio Chatbot 的 messages 格式
+    从 memory 加载历史对话并格式化为 Gradio Chatbot 的 messages 格式。
 
-    格式: [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}, ...]
-    过程内容(tool_use/tool_result/thinking)放入 code 代码块
+    每个用户回合渲染为一条 assistant 消息：工具过程(tool_use/tool_result)用代码块、
+    正文(text)用 Markdown，按出现顺序交错——复用 render_segments，避免正文被困在
+    代码块内（与实时流式 chat() 的渲染保持一致）。thinking 不回显。
+
+    Args:
+        session_id: 会话唯一标识符
+        rounds: 要加载的轮数（每轮 = user + 后续 assistant/tool_result 直到下一个纯 user）
+
+    Returns:
+        list: [{"role": "user"|"assistant", "content": str}, ...]
     """
-    try :
+    try:
         messages = load_recent_messages(session_id, rounds=rounds)
         if not messages:
             return []
 
         history = []
-        cnt_status = 0  # 0:找role=user的记录, 1:找role=assistant的记录
         user_msg = None
-        assistant_msg = "```\n"
-        cnt_is_answer = False
+        segments = []
+
+        def flush():
+            """收尾当前回合：写入 user + assistant(渲染后) 并重置"""
+            nonlocal user_msg, segments
+            if user_msg is not None:
+                history.append({"role": "user", "content": user_msg})
+                history.append({"role": "assistant", "content": render_segments(segments)})
+            user_msg = None
+            segments = []
+
         for msg in messages:
+            if is_pure_user_message(msg):
+                # 新回合开始：先收尾上一回合
+                flush()
+                user_msg = msg.get("content", "")
+                continue
+
             content = msg.get("content", "")
-            if cnt_status == 0:
-                if is_pure_user_message(msg):
-                    user_msg = content
-                    cnt_status = 1
-                else:
-                    pass
-            else:
-                if is_pure_user_message(msg):
-                    assistant_msg += '\n```'
-                    append_history_message(history, user_msg, assistant_msg)
+            if isinstance(content, list):
+                _blocks_to_segments(content, segments)
 
-                    user_msg = content
-                    cnt_status = 1
-
-                    # reinit
-                    assistant_msg = '```\n'
-                    cnt_is_answer = False
-                else:
-                    if isinstance(content, list):
-                        cnt_is_answer = is_answer_content(content)
-                        content = sorted(content, key=lambda x: priority.get(x.get('type', ''), 2))
-
-                        # 纯回答消息：先关闭前面工具调用累积的代码块，避免最终回答被困在 ``` 内
-                        if cnt_is_answer:
-                            assistant_msg += '\n```\n'
-
-                        for block in content:
-                            if not isinstance(block, dict):
-                                # 忽略, 正常不会有这样的数据
-                                continue
-                            block_type = block.get('type', '')
-                            if 'thinking' == block_type:
-                                # 不回显 thinking 记录
-                                pass
-                            elif 'text' == block_type:
-                                assistant_msg += block.get('text', '')
-                                assistant_msg += '\n'
-                            elif 'tool_use' == block_type:
-                                assistant_msg += '🔧 调用工具: '
-                                assistant_msg += str(block.get('input'))
-                                assistant_msg += '\n'
-                            elif 'tool_result' == block_type:
-                                assistant_msg += '👉🏻 工具结果:'
-                                tool_result = block.get('content', '')
-                                if tool_result and len(tool_result) > 200:
-                                    assistant_msg += tool_result[:200].replace("\n", " ") + "..."
-                                else:
-                                    assistant_msg += tool_result.replace("\n", " ")
-                                assistant_msg += '\n'
-
-                    if cnt_is_answer:
-                        append_history_message(history, user_msg, assistant_msg)
-
-                        # reinit
-                        cnt_status = 0
-                        user_msg = None
-                        assistant_msg = '```\n'
-                        cnt_is_answer = False
-
-        if not cnt_is_answer and user_msg:
-            append_history_message(history, user_msg, assistant_msg)
-
+        flush()
         return history
     except Exception as e:
-        LOG.exception(f'加载历史信息失败, {e}')
+        LOG.exception(f"加载历史信息失败, {e}")
         return []
 
 
-if __name__ == '__main__':
-    session_id = 'main'
+if __name__ == "__main__":
+    session_id = "main"
     print(format_history_from_memory(session_id))

@@ -7,6 +7,7 @@ import gradio as gr
 from PIL import Image as PILImage
 from app.llm.react_agent import agent_loop, StreamEvent
 from web.history_message import format_history_from_memory
+from web.render import render_segments
 from app.log.logger import LOG
 from app.llm.image_info import get_image_info
 from app.tool.task_manager import format_task_progress_panel
@@ -418,32 +419,21 @@ async def chat(message, history, session_id):
 
         loop.run_in_executor(None, run_agent)
 
-        process_text = ""  # 确定的过程内容
-        pending_text = ""  # 待定内容（可能是答案）
+        # 有序段落列表：保留 PROCESS(工具过程→代码块) 与 TEXT(正文→Markdown) 的交错顺序，
+        # 避免正文被后续工具调用"吞"进过程代码块。
+        segments = []  # [{"kind": "process"|"text", "text": str}]
         last_output = ""  # 上次输出的内容，用于检测变化
         last_yield_time = 0  # 上次 yield 的时间戳
         min_yield_interval = 0.05  # 最小更新间隔（秒），30ms 节流
 
         def build_output():
-            """构建当前输出内容"""
-            output = ""
-            if process_text.strip():
-                output += f"```\n{process_text.strip()}\n```"
-            # 任务进度面板：存在未结束的任务计划时，嵌在工具过程与最终回复之间
+            """构建当前输出内容：委托 render_segments 渲染段落 + 任务面板"""
             try:
                 task_panel = format_task_progress_panel(session_id)
             except Exception as e:
                 LOG.warning(f"渲染任务进度面板失败 [{session_id}]: {e}")
                 task_panel = ""
-            if task_panel:
-                if output:
-                    output += "\n"
-                output += task_panel
-            if pending_text:
-                if output:
-                    output += "\n"
-                output += pending_text
-            return output
+            return render_segments(segments, task_panel)
 
         while True:
             event = await queue.get()
@@ -455,19 +445,29 @@ async def chat(message, history, session_id):
                 content = event.get("content", "")
 
                 if event_type == StreamEvent.PROCESS:
-                    # 确定的过程内容，加入 process_text
-                    if pending_text:
-                        process_text += pending_text
-                        pending_text = ""
-                    process_text += content
+                    # 工具调用/结果：归入过程段落（末段同为 process 则合并）
+                    if segments and segments[-1]["kind"] == "process":
+                        segments[-1]["text"] += content
+                    else:
+                        segments.append({"kind": "process", "text": content})
                 elif event_type == "text":
-                    # 待定文本
-                    pending_text += content
+                    # 正文增量：归入正文段落（末段同为 text 则合并）
+                    if segments and segments[-1]["kind"] == "text":
+                        segments[-1]["text"] += content
+                    else:
+                        segments.append({"kind": "text", "text": content})
                 elif event_type == StreamEvent.ANSWER:
-                    # 直接答案（命令结果等）
-                    pending_text = content
+                    # 直接答案（命令结果等）：替换末尾正文段落，无则新建
+                    if segments and segments[-1]["kind"] == "text":
+                        segments[-1]["text"] = content
+                    else:
+                        segments.append({"kind": "text", "text": content})
             else:
-                pending_text += str(event)
+                # 兜底：非 dict 事件作为正文增量
+                if segments and segments[-1]["kind"] == "text":
+                    segments[-1]["text"] += str(event)
+                else:
+                    segments.append({"kind": "text", "text": str(event)})
 
             # 节流控制：检查是否需要更新 UI
             current_time = asyncio.get_event_loop().time()
