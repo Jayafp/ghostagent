@@ -541,7 +541,7 @@ def agent_loop(message: str, session_id: str) -> Generator[Dict, None, None]:
                 append_message(session_id, "assistant", response_content_blocks)
 
             if final_response.stop_reason != "tool_use":
-                LOG.info(f'agent stop loop, stop_reason={final_response.stop_reason}, usage_tokens: {usage_tokens(final_response)}')
+                LOG.info(f'agent stop loop, stop_reason={final_response.stop_reason}, session_id={session_id}, usage_tokens: {usage_tokens(final_response)}')
                 destroy_sandbox(session_id)
                 return
 
