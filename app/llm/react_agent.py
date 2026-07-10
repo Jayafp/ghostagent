@@ -563,7 +563,7 @@ def agent_loop(message: str, session_id: str) -> Generator[Dict, None, None]:
             def _emit_result(block, output, tag=""):
                 LOG.info(f">>>tool_call: {block.name}[{block.input}] → {output[:200].replace(chr(10), '. ')}")
                 return {"type": StreamEvent.PROCESS,
-                        "content": f"\n👉🏻 工具结果{tag}: {output[:200].replace(chr(10), ' ')}{'...' if len(output) > 200 else ''}\n"}
+                        "content": f"\n👉🏻 工具结果{tag}: {output[:200].replace(chr(10), ' ')}{'...' if len(output) > 200 else ''}"}
 
             results = []
             # 按原顺序处理，把"连续的并行安全工具"打包成一组并发执行；

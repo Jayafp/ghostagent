@@ -32,7 +32,7 @@ outgoing:
   # host.docker.internal 指向宿主机（docker-compose 里已配 extra_hosts 兼容各平台）
   # 代理端口变化时改这里，然后 docker compose restart
   proxies:
-    all://: 'http://host.docker.internal:10900'
+    all://: 'http://host.docker.internal:10902'
 
 engines:
   - name: google cse

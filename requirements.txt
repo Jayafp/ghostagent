@@ -18,3 +18,6 @@ jieba~=0.42.1
 
 # Docker Sandbox
 docker~=7.1.0
+
+# 股票分析
+akshare
