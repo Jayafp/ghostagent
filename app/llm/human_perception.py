@@ -448,6 +448,8 @@ def generate_perception(session_id: str, date: str = None, start_line: int = 0) 
         5. 保存到磁盘
         6. 继续处理下一批（has_next）
     """
+    LOG.info(f'generate_perception start, session_id={session_id}')
+
     prev_summary = None
     prev_perception = read_from_disk(session_id)
     if prev_perception:
@@ -500,7 +502,7 @@ def generate_perception(session_id: str, date: str = None, start_line: int = 0) 
             date = history_messages.get('date')
             start_line = history_messages.get('start_line')
 
-
+        LOG.info(f'generate_perception end, session_id={session_id}')
     return result
 
 
@@ -543,7 +545,6 @@ def async_generate_perception_ifneed(session_id: str) -> None:
 
     try:
         _generate_is_running[session_id] = True
-        LOG.debug(f'generate_perception start, session_id={session_id}')
 
         human_perception = get_human_perception(session_id)
         if human_perception:
