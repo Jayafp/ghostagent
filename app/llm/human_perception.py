@@ -560,4 +560,3 @@ def async_generate_perception_ifneed(session_id: str) -> None:
 
     finally:
         _generate_is_running[session_id] = False
-        LOG.info(f'generate_perception end, session_id={session_id}')
