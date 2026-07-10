@@ -329,22 +329,26 @@ def generate_summary(history_messages: str) -> Optional[str]:
 
 **请输出简洁的摘要（不超过800字）：**"""
 
-    # 调用模型生成摘要
-    response = client.messages.create(
-        model=SUMMARY_MODEL,
-        max_tokens=2048,
-        system="你是一个专业的对话总结助手，擅长提取关键信息并生成结构化的摘要。",
-        messages=[{"role": "user", "content": summary_prompt}],
-        temperature=0.3  # 降低随机性，保持摘要的稳定性
-    )
+    try:
+        # 调用模型生成摘要
+        response = client.messages.create(
+            model=SUMMARY_MODEL,
+            max_tokens=2048,
+            system="你是一个专业的对话总结助手，擅长提取关键信息并生成结构化的摘要。",
+            messages=[{"role": "user", "content": summary_prompt}],
+            temperature=0.3  # 降低随机性，保持摘要的稳定性
+        )
 
-    summary = None
-    for block in response.content:
-        if block and hasattr(block, 'text'):
-            summary = block.text
-            break
+        summary = None
+        for block in response.content:
+            if block and hasattr(block, 'text'):
+                summary = block.text
+                break
 
-    return summary
+        return summary
+    except Exception as e:
+        LOG.error(f"generate_summary fail, e={e}")
+        return None
 
 
 
@@ -448,62 +452,66 @@ def generate_perception(session_id: str, date: str = None, start_line: int = 0) 
         5. 保存到磁盘
         6. 继续处理下一批（has_next）
     """
-    LOG.info(f'generate_perception start, session_id={session_id}')
+    try:
+        LOG.info(f'generate_perception start, session_id={session_id}')
 
-    prev_summary = None
-    prev_perception = read_from_disk(session_id)
-    if prev_perception:
-        prev_summary = prev_perception.get('summary', None)
-        LOG.info(f'read prev perception success, session_id={session_id}')
+        prev_summary = None
+        prev_perception = read_from_disk(session_id)
+        if prev_perception:
+            prev_summary = prev_perception.get('summary', None)
+            LOG.info(f'read prev perception success, session_id={session_id}')
 
-    result = {'success': False}
-    has_next = True
-    while has_next:
-        history_messages = get_memory_messages(session_id, date, start_line)
-        if not history_messages:
-            return result
+        result = {'success': False}
+        has_next = True
+        while has_next:
+            history_messages = get_memory_messages(session_id, date, start_line)
+            if not history_messages:
+                return result
 
-        rounds = history_messages.get('rounds', 0)
-        org_message_len = history_messages.get('org_message_len', 0)
-        if rounds <= MIN_ROUNDS and org_message_len < MAX_MESSAGE_LENGHT:
-            LOG.debug(f"rounds too shot, skip generate perception. rounds={rounds}, org_message_len={org_message_len}")
-            return result
+            rounds = history_messages.get('rounds', 0)
+            org_message_len = history_messages.get('org_message_len', 0)
+            if rounds <= MIN_ROUNDS and org_message_len < MAX_MESSAGE_LENGHT:
+                LOG.debug(f"rounds too shot, skip generate perception. rounds={rounds}, org_message_len={org_message_len}")
+                return result
 
-        new_summary = generate_summary(history_messages['message'])
-        LOG.info(f"generate summary success, session_id={session_id}, date={date}, start_line={start_line}")
-        if not new_summary:
-            LOG.error(f'generate summary failed, session_id={session_id}')
-            return result
+            new_summary = generate_summary(history_messages['message'])
+            if not new_summary:
+                LOG.error(f'generate summary failed, session_id={session_id}')
+                return result
+            LOG.info(f"generate summary success, session_id={session_id}, date={date}, start_line={start_line}")
 
-        summary = new_summary
-        if prev_summary:
-            # merge summary
-            summary = merge_summary(prev_summary, new_summary)
-            LOG.info(f"merge summary success, session_id={session_id}, date={date}, start_line={start_line}, "
-                     f"prev_summary={prev_summary[:100]}, new_summary={new_summary[:100]}")
+            summary = new_summary
+            if prev_summary:
+                # merge summary
+                summary = merge_summary(prev_summary, new_summary)
+                LOG.info(f"merge summary success, session_id={session_id}, date={date}, start_line={start_line}, "
+                         f"prev_summary={prev_summary[:100]}, new_summary={new_summary[:100]}")
 
-        if not summary:
-            LOG.error(f'merge summary failed, session_id={session_id}')
-            return result
+            if not summary:
+                LOG.error(f'merge summary failed, session_id={session_id}')
+                return result
 
-        result = {
-            'success': True,
-            'session_id': session_id,
-            'summary': summary,
-            'date': history_messages['date'],
-            'start_line': history_messages['start_line'],
-            'generate_time': int(time.time()),
-        }
-        write_to_disk(result)
-        prev_summary = summary
+            result = {
+                'success': True,
+                'session_id': session_id,
+                'summary': summary,
+                'date': history_messages['date'],
+                'start_line': history_messages['start_line'],
+                'generate_time': int(time.time()),
+            }
+            write_to_disk(result)
+            prev_summary = summary
 
-        has_next = history_messages.get('has_next', False)
-        if has_next:
-            date = history_messages.get('date')
-            start_line = history_messages.get('start_line')
+            has_next = history_messages.get('has_next', False)
+            if has_next:
+                date = history_messages.get('date')
+                start_line = history_messages.get('start_line')
 
-        LOG.info(f'generate_perception end, session_id={session_id}')
-    return result
+            LOG.info(f'generate_perception end, session_id={session_id}')
+        return result
+    except Exception as e:
+        LOG.error(f"generate_perception fail, e={e}")
+        return None
 
 
 
