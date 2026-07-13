@@ -69,11 +69,11 @@ async def fetch_content(url: str, retry: bool = True) -> Union[str, List[str]]:
             page = context.pages[0] if context.pages else await context.new_page()
 
             # 设置路由，屏蔽不必要的资源
-            await page.route("**/*", handle_route)
+            #await page.route("**/*", handle_route)
 
             # 根据重试状态选择加载策略
             wait_until = 'networkidle' if retry else 'load'
-            LOG.info(f'goto url: {url}')
+            LOG.info(f'goto url: {url}，wait_until={wait_until}')
             await page.goto(url, wait_until=wait_until, timeout=FETCH_TIMEOUT)
 
             # 获取网页文本内容
@@ -100,5 +100,5 @@ if __name__ == '__main__':
     #https://sankalp.bearblog.dev/how-prompt-caching-works/
     #load不行, https://opendocs.alipay.com/b/0irv8o
     #networkidle不行, 因为有css加载不出来, https://cloud.tencent.com/developer/article/2551041
-    text = asyncio.run(fetch_content('https://cloud.tencent.com/developer/article/2551041'))
+    text = asyncio.run(fetch_content('https://github.com/Fission-AI/OpenSpec/issues/738', False))
     print(text)

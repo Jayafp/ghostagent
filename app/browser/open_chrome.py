@@ -94,7 +94,7 @@ def open_chrome(debug_port: int, headless: bool = True) -> subprocess.Popen:
         "--metrics-recording-only",
         "--disable-default-apps",
         "--mute-audio",
-        "--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.7680.165 Safari/537.36",
     ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     return chrome_process
