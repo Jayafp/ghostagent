@@ -594,6 +594,7 @@ def agent_loop(message: str, session_id: str) -> Generator[Dict, None, None]:
                         # 不用 with 上下文：其 __exit__ 会阻塞至所有任务完成，无法中断。
                         # 改为手动管理 + wait(timeout) 轮询 _is_stopped，使用户停止或某个并行
                         # 子代理 / API 挂起时能及时跳出，而非无限期阻塞（审查 #3）。
+                        pool_size = min(len(batch), 8)
                         ex = ThreadPoolExecutor(max_workers=pool_size)
                         try:
                             futures = [ex.submit(_exec_tool, b) for b in batch]
