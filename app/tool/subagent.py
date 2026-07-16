@@ -1,7 +1,7 @@
 """子 Agent 工具：父 Agent 委派子任务给独立上下文的子 Agent 执行。
 
 子 Agent 拥有独立 session_id（沙箱 / 任务图 / 消息上下文均隔离），内部跑精简
-非流式 ReAct 循环，完成后只把最终结论文本作为 tool_result 返回父 Agent。
+流式 ReAct 循环，完成后只把最终结论文本作为 tool_result 返回父 Agent。
 子 Agent 工具集合剔除 subagent，结构上不可嵌套递归。
 
 注意循环依赖：本模块模块级导入 react_agent 与 tools 是安全的，因为 tools.py
@@ -64,7 +64,7 @@ def run_subagent(parent_session_id: str, task: str, context: str = "") -> str:
             messages = optimize_thinking_for_llm(messages)
             messages = micro_compact(messages)
 
-            resp = _messages_create_with_retry(messages)
+            resp = _messages_stream_with_retry(messages)
 
             messages.append({"role": "assistant", "content": resp.content})
             LOG.info(f"subagent 迭代 {iteration}: sub={sub_session_id} stop_reason={resp.stop_reason}")
@@ -130,15 +130,17 @@ def run_subagent(parent_session_id: str, task: str, context: str = "") -> str:
         LOG.info(f"subagent 沙箱已清理: sub={sub_session_id}")
 
 
-def _messages_create_with_retry(messages):
+def _messages_stream_with_retry(messages):
     """调用子 Agent LLM，对 429 / 超时按与父循环一致的次数重试（审查 #5）。
 
+    流式调用以规避 SDK 对非流式大 max_tokens 请求的 10 分钟超时保护
+    （max_tokens=128000 时，SDK 估算生成耗时超过 10 分钟会强制要求 streaming）。
     重试耗尽才抛出，由 run_subagent 外层捕获并返回 ``[子Agent错误]``。
     """
     last_err = None
     for attempt in range(1, _LLM_MAX_RETRIES + 1):
         try:
-            return client.messages_create(
+            with client.messages_stream(
                 model=MODEL,
                 system=_SUB_SYSTEM_PROMPT,
                 messages=messages,
@@ -148,7 +150,8 @@ def _messages_create_with_retry(messages):
                     "type": os.getenv("LLM_THINKING_TYPE", "disabled"),
                     "budget_tokens": int(os.getenv("budget_tokens", 4096)),
                 },
-            )
+            ) as stream:
+                return stream.get_final_message()
         except (anthropic.RateLimitError, anthropic.APITimeoutError) as e:
             last_err = e
             LOG.exception(f"subagent LLM 限流/超时，重试中... ({attempt}/{_LLM_MAX_RETRIES})")

@@ -46,10 +46,7 @@ def test_run_subagent_isolates_session_and_returns_answer(monkeypatch):
         ),
     ]
 
-    def fake_messages_create(**kwargs):
-        return responses.pop(0)
-
-    fake_client = types.SimpleNamespace(messages_create=fake_messages_create)
+    fake_client = _make_client(responses)
 
     monkeypatch.setattr(subagent_mod, "client", fake_client)
     monkeypatch.setitem(TOOL_HANDLERS, "bash", fake_bash)
@@ -70,14 +67,41 @@ def test_run_subagent_isolates_session_and_returns_answer(monkeypatch):
     assert destroyed_ids == [sub_sid]
 
 
-def _make_client(responses):
-    """构造一个按顺序弹出响应的假 client；响应若是异常则抛出。"""
-    def fake_messages_create(**kwargs):
-        item = responses.pop(0)
+class _FakeStream:
+    """模拟 anthropic MessageStream：进入上下文后 get_final_message 弹出下一条响应。
+
+    响应若是 BaseException 则抛出（用于测试重试 / 异常路径）。
+    """
+    def __init__(self, pop):
+        self._pop = pop
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def get_final_message(self):
+        item = self._pop()
         if isinstance(item, BaseException):
             raise item
         return item
-    return types.SimpleNamespace(messages_create=fake_messages_create)
+
+    def __iter__(self):
+        return iter(())
+
+
+def _client_from_pop(pop):
+    """用自定义 pop 闭包构造假 client：每次 messages_stream 返回一个 _FakeStream，
+    其 get_final_message 调 pop() 取下一条响应（异常则抛）。"""
+    def fake_messages_stream(**kwargs):
+        return _FakeStream(pop)
+    return types.SimpleNamespace(messages_stream=fake_messages_stream)
+
+
+def _make_client(responses):
+    """构造一个按顺序弹出响应的假 client；响应若是异常则抛出。"""
+    return _client_from_pop(lambda: responses.pop(0))
 
 
 def test_destroy_safe_without_docker():
@@ -125,15 +149,14 @@ def test_max_tokens_continues_loop(monkeypatch):
     monkeypatch.setattr(subagent_mod, "destroy_sandbox", lambda sid: None)
     create_count = {"n": 0}
 
-    def fake_messages_create(**kwargs):
+    def pop():
         create_count["n"] += 1
         if create_count["n"] == 1:
             return types.SimpleNamespace(content=[_text_block("被截断的不完整片段")],
                                          stop_reason="max_tokens")
         return types.SimpleNamespace(content=[_text_block("完整结论")], stop_reason="end_turn")
 
-    monkeypatch.setattr(subagent_mod, "client",
-                        types.SimpleNamespace(messages_create=fake_messages_create))
+    monkeypatch.setattr(subagent_mod, "client", _client_from_pop(pop))
 
     answer = subagent_mod.run_subagent("parent-sess", "写报告")
 
@@ -199,14 +222,13 @@ def test_retry_on_rate_limit(monkeypatch):
 
     create_count = {"n": 0}
 
-    def fake_messages_create(**kwargs):
+    def pop():
         create_count["n"] += 1
         if create_count["n"] <= 2:
             raise _RateLimit("429")
         return types.SimpleNamespace(content=[_text_block("DONE")], stop_reason="end_turn")
 
-    monkeypatch.setattr(subagent_mod, "client",
-                        types.SimpleNamespace(messages_create=fake_messages_create))
+    monkeypatch.setattr(subagent_mod, "client", _client_from_pop(pop))
 
     answer = subagent_mod.run_subagent("parent-sess", "重试任务")
 
