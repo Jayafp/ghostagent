@@ -9,9 +9,14 @@
 """
 
 import os
+import time
 from uuid import uuid4
 
+import anthropic
+
 from app.llm.react_agent import client, MODEL
+from app.llm.context_compact import micro_compact
+from app.llm.context_optimizer import optimize_thinking_for_llm
 from app.tool.tools import TOOLS, TOOL_HANDLERS, destroy_sandbox
 from app.log.logger import LOG
 
@@ -29,6 +34,9 @@ _SUB_SYSTEM_PROMPT = (
 
 MAX_ITERATIONS = 50
 MAX_ANSWER_CHARS = 20000
+# 与父循环对齐：429 / 超时最多重试 10 次，每次间隔 10s
+_LLM_MAX_RETRIES = 10
+_LLM_RETRY_SLEEP = 10
 
 
 def run_subagent(parent_session_id: str, task: str, context: str = "") -> str:
@@ -49,21 +57,27 @@ def run_subagent(parent_session_id: str, task: str, context: str = "") -> str:
 
     try:
         final_text = ""
+        last_real_text = ""  # 迭代上限时取最后一条含真实文本的产出（审查 #4）
         hit_limit = False
         for iteration in range(1, MAX_ITERATIONS + 1):
-            resp = client.messages_create(
-                model=MODEL,
-                system=_SUB_SYSTEM_PROMPT,
-                messages=messages,
-                tools=CHILD_TOOLS,
-                max_tokens=128000,
-                thinking={
-                    "type": os.getenv("LLM_THINKING_TYPE", "disabled"),
-                    "budget_tokens": int(os.getenv("budget_tokens", 4096)),
-                },
-            )
+            # 每轮调用 LLM 前：与父循环一致的 thinking 精简 + 上下文压缩，防窗口溢出（审查 #2）
+            messages = optimize_thinking_for_llm(messages)
+            messages = micro_compact(messages)
+
+            resp = _messages_create_with_retry(messages)
+
             messages.append({"role": "assistant", "content": resp.content})
             LOG.info(f"subagent 迭代 {iteration}: sub={sub_session_id} stop_reason={resp.stop_reason}")
+
+            # 记录本轮真实文本产出，供迭代上限路径使用（审查 #4）
+            round_text = _extract_text(resp.content)
+            if round_text:
+                last_real_text = round_text
+
+            # max_tokens 截断不当最终答案：并入消息 + 续轮提示，继续下一轮（审查 #6）
+            if resp.stop_reason == "max_tokens":
+                messages.append({"role": "user", "content": "（上一条回复因长度被截断，请继续完成你的结论）"})
+                continue
 
             tool_use_blocks = [b for b in resp.content if getattr(b, "type", None) == "tool_use"]
             if resp.stop_reason != "tool_use" or not tool_use_blocks:
@@ -93,16 +107,20 @@ def run_subagent(parent_session_id: str, task: str, context: str = "") -> str:
                 })
             messages.append({"role": "user", "content": tool_results})
         else:
-            # 达到迭代上限：取已产出的最后一条 assistant 文本 + 提示
+            # 达到迭代上限：取最后一条含真实 text 块的产出 + 提示（审查 #4）
             hit_limit = True
-            final_text = _extract_last_assistant_text(messages)
+            final_text = last_real_text
 
         if hit_limit:
             final_text = (final_text or "") + f"\n\n[子Agent提示] 已达最大迭代次数 {MAX_ITERATIONS}，停止执行。"
             LOG.warning(f"subagent 达到迭代上限: sub={sub_session_id} max={MAX_ITERATIONS}")
 
+        # 截断到上限并追加截断标记，让父 Agent 感知被截断（审查 #8）
         if len(final_text) > MAX_ANSWER_CHARS:
-            final_text = final_text[:MAX_ANSWER_CHARS]
+            orig_len = len(final_text)
+            final_text = final_text[:MAX_ANSWER_CHARS] + (
+                f"\n\n...[子 Agent 最终答案已截断至 {MAX_ANSWER_CHARS} 字符，原长度 {orig_len} 字符]"
+            )
         return final_text
     except Exception as e:
         LOG.exception(f"subagent 执行异常: sub={sub_session_id} err={e}")
@@ -112,6 +130,32 @@ def run_subagent(parent_session_id: str, task: str, context: str = "") -> str:
         LOG.info(f"subagent 沙箱已清理: sub={sub_session_id}")
 
 
+def _messages_create_with_retry(messages):
+    """调用子 Agent LLM，对 429 / 超时按与父循环一致的次数重试（审查 #5）。
+
+    重试耗尽才抛出，由 run_subagent 外层捕获并返回 ``[子Agent错误]``。
+    """
+    last_err = None
+    for attempt in range(1, _LLM_MAX_RETRIES + 1):
+        try:
+            return client.messages_create(
+                model=MODEL,
+                system=_SUB_SYSTEM_PROMPT,
+                messages=messages,
+                tools=CHILD_TOOLS,
+                max_tokens=128000,
+                thinking={
+                    "type": os.getenv("LLM_THINKING_TYPE", "disabled"),
+                    "budget_tokens": int(os.getenv("budget_tokens", 4096)),
+                },
+            )
+        except (anthropic.RateLimitError, anthropic.APITimeoutError) as e:
+            last_err = e
+            LOG.exception(f"subagent LLM 限流/超时，重试中... ({attempt}/{_LLM_MAX_RETRIES})")
+            time.sleep(_LLM_RETRY_SLEEP)
+    raise last_err
+
+
 def _extract_text(content) -> str:
     """从一条 assistant 消息的 content 中拼接所有 text 块文本。"""
     parts = []
@@ -119,11 +163,3 @@ def _extract_text(content) -> str:
         if getattr(block, "type", None) == "text":
             parts.append(getattr(block, "text", ""))
     return "".join(parts)
-
-
-def _extract_last_assistant_text(messages) -> str:
-    """从 messages 倒序找最后一条 assistant 消息，提取其 text 块文本。"""
-    for msg in reversed(messages):
-        if msg.get("role") == "assistant":
-            return _extract_text(msg.get("content"))
-    return ""
