@@ -111,7 +111,14 @@ class ContainerManager:
             return None
 
     def destroy(self, session_id: str):
-        """销毁会话对应的沙箱容器"""
+        """销毁会话对应的沙箱容器。
+
+        best-effort：Docker 不可用（``_client is None``，常见于无 Docker 环境，
+        且多数子会话从未创建沙箱）时直接返回，避免 ``self._client.containers.get``
+        抛 ``AttributeError`` 覆盖调用方（如子 Agent finally）的成功结果。
+        """
+        if not self._docker_available or self._client is None:
+            return
         with self._lock:
             container = self._containers.pop(session_id, None)
             if container is None:

@@ -4,7 +4,7 @@ import os
 import time
 import json
 import atexit
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait
 from typing import Generator, Dict, Tuple, Optional, List
 from enum import Enum
 
@@ -591,10 +591,29 @@ def agent_loop(message: str, session_id: str) -> Generator[Dict, None, None]:
                     else:
                         for b in batch:
                             yield {"type": StreamEvent.PROCESS, "content": f"\n🔧 调用工具(并行): {b.name} → {b.input}"}
+                        # 不用 with 上下文：其 __exit__ 会阻塞至所有任务完成，无法中断。
+                        # 改为手动管理 + wait(timeout) 轮询 _is_stopped，使用户停止或某个并行
+                        # 子代理 / API 挂起时能及时跳出，而非无限期阻塞（审查 #3）。
                         pool_size = min(len(batch), 8)
-                        with ThreadPoolExecutor(max_workers=pool_size) as ex:
+                        ex = ThreadPoolExecutor(max_workers=pool_size)
+                        try:
                             futures = [ex.submit(_exec_tool, b) for b in batch]
-                            outputs = [f.result() for f in futures]
+                            outputs = [None] * len(futures)
+                            pending = set(futures)
+                            while pending:
+                                if _is_stopped(session_id):
+                                    for f in pending:
+                                        f.cancel()
+                                    break
+                                done, pending = wait(pending, timeout=0.5)
+                                for f in done:
+                                    outputs[futures.index(f)] = f.result()
+                            # 未完成（被取消 / 中断）的槽位填停止标记
+                            for idx, f in enumerate(futures):
+                                if outputs[idx] is None:
+                                    outputs[idx] = "[工具执行已取消：用户终止]"
+                        finally:
+                            ex.shutdown(wait=False)
                         for b, output in zip(batch, outputs):
                             yield _emit_result(b, output)
                             results.append({"type": "tool_result", "tool_use_id": b.id, "content": output})

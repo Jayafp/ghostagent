@@ -420,6 +420,12 @@ def _finish_task_handler(**kw):
     return finish_task(kw["session_id"])
 
 
+def _subagent_handler(**kw):
+    # 懒加载避免 tools <-> subagent <-> react_agent 循环导入
+    from app.tool.subagent import run_subagent
+    return run_subagent(kw["session_id"], kw["task"], kw.get("context", ""))
+
+
 TOOL_HANDLERS = {
     "bash": create_tool_handler(
         "bash",
@@ -492,6 +498,12 @@ TOOL_HANDLERS = {
         ["session_id"],
         _finish_task_handler
     ),
+    "subagent": create_tool_handler(
+        "subagent",
+        ["task"],
+        _subagent_handler,
+        ["context"]
+    ),
 }
 
 # 并行安全的工具集合：只读 / 无共享副作用，可在同一 session 内并发执行
@@ -503,6 +515,9 @@ PARALLEL_SAFE_TOOLS = {
     "web_search",
     "memory_search",
     "read_skill_resource",
+    # subagent：每个子 Agent 拿独立 sub_session_id，沙箱开启时各自独立容器真隔离；
+    # 沙箱关闭时共享真实 cwd，并行子 Agent 应操作互不冲突的文件（由模型保证子任务不重叠）
+    "subagent",
 }
 
 # 任务管理工具集合：执行后会改变任务图状态，需通知 UI 刷新任务进度面板
@@ -792,6 +807,35 @@ TOOLS = [
         "input_schema": {
             "type": "object",
             "properties": {}
+        }
+    },
+    {
+        "name": "subagent",
+        "description": """委派一个子任务给拥有独立上下文的子 Agent 执行，阻塞直到完成，返回子 Agent 的最终结论。
+
+**用途**：把可独立完成的子任务（如"调研某主题"、"分析某个文件"、"实现某个独立模块"）交给子 Agent，避免子任务的过程细节（工具调用、中间结果）污染父 Agent 上下文，节省父上下文窗口。
+
+**并行用法**：在同一个回复里连续发起多个 subagent 调用，它们会**并行执行**（各自独立上下文 / 沙箱），全部完成后结果一起返回，你在下一回合汇总各子 Agent 的结论再决策下一步。适合"分别调研 A 和 B"、"并行实现互不冲突的两个模块"等场景。
+
+**重要约束**：
+- 子 Agent 与你上下文隔离，**看不到你的会话历史**；所有必要信息都要写进 task（和可选 context）里，让它自包含。
+- 子 Agent 拥有除 subagent 外的全部工具，不能再开子 Agent（不可嵌套）。
+- 返回的是子 Agent 的最终结论文本（已截断），不是过程日志。
+
+**不适合使用**：单步即可完成的简单任务（直接用对应工具更快）；需要你亲自基于中间过程决策的任务（子 Agent 只给最终结论，过程不可见）。""",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task": {
+                    "type": "string",
+                    "description": "委派给子 Agent 的任务说明，需自包含（子 Agent 看不到父会话历史）。写清目标、范围、完成标准。"
+                },
+                "context": {
+                    "type": "string",
+                    "description": "可选的补充上下文，如相关背景、约束、已有发现等，帮助子 Agent 更好地完成任务。"
+                }
+            },
+            "required": ["task"]
         }
     }
 ]
