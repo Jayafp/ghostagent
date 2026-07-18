@@ -190,6 +190,16 @@ STICKY_SCROLL_JS = """
 """
 
 
+# LaTeX 分隔符：Gradio 默认只渲染 $$...$$（块级），
+# 补上 $...$（行内）等，否则表格/正文里的行内公式不渲染。
+LATEX_DELIMITERS = [
+    {"left": "$$", "right": "$$", "display": True},
+    {"left": "$", "right": "$", "display": False},
+    {"left": "\\(", "right": "\\)", "display": False},
+    {"left": "\\[", "right": "\\]", "display": True},
+]
+
+
 # 紧凑样式 CSS
 COMPACT_CSS = """
 /* 整体布局 - 确保聊天区域填满剩余空间 */
@@ -521,6 +531,7 @@ def run():
                 show_label=False,
                 autoscroll=False,
                 elem_id="main_chatbot",
+                latex_delimiters=LATEX_DELIMITERS,
             )
 
             # 输入区域（包含图片上传、文本输入、发送按钮）
